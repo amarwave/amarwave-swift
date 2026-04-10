@@ -34,10 +34,27 @@ open class AmarWaveChannel: NSObject {
     private var globalHandlers: [(String, Any) -> Void] = []
     private let lock = NSLock()
 
+    // MARK: - Publish support
+
+    /// Closure type used to perform the actual HTTP publish.
+    typealias PublishFn = (_ event: String, _ data: [String: Any], _ completion: ((Bool) -> Void)?) -> Void
+
+    private var _publishFn: PublishFn?
+
+    private struct QueuedPublish {
+        let event: String
+        let data: [String: Any]
+        let completion: ((Bool) -> Void)?
+    }
+
+    private var _publishQueue: [QueuedPublish] = []
+    private let queueLock = NSLock()
+
     // MARK: - Init
 
-    init(name: String) {
+    init(name: String, publish: PublishFn? = nil) {
         self.name = name
+        self._publishFn = publish
         super.init()
     }
 
@@ -127,10 +144,61 @@ open class AmarWaveChannel: NSObject {
         return self
     }
 
+    // MARK: - Publish
+
+    /// Publish an event to this channel via the HTTP API.
+    ///
+    /// Safe to call before `isSubscribed` is true — calls are queued and flushed
+    /// automatically once the subscription is confirmed.
+    ///
+    /// - Parameters:
+    ///   - event:      Event name subscribers will receive.
+    ///   - data:       JSON-serialisable dictionary. Defaults to `[:]`.
+    ///   - completion: Called with `true` on success, `false` on error.
+    ///
+    /// ```swift
+    /// channel.publish(event: "message", data: ["user": "Ali", "text": "Hello!"])
+    /// ```
+    public func publish(
+        event: String,
+        data: [String: Any] = [:],
+        completion: ((Bool) -> Void)? = nil
+    ) {
+        if !isSubscribed {
+            queueLock.lock()
+            _publishQueue.append(QueuedPublish(event: event, data: data, completion: completion))
+            queueLock.unlock()
+            return
+        }
+        _publishFn?(event, data, completion) ?? completion?(false)
+    }
+
+    /// Alias for `publish`. Kept for compatibility.
+    @discardableResult
+    public func trigger(
+        event: String,
+        data: [String: Any] = [:],
+        completion: ((Bool) -> Void)? = nil
+    ) -> Self {
+        publish(event: event, data: data, completion: completion)
+        return self
+    }
+
     // MARK: - Internal
 
     func setSubscribed(_ value: Bool) {
         isSubscribed = value
+    }
+
+    /// Flush any publishes queued before subscription was confirmed.
+    func flushQueue() {
+        queueLock.lock()
+        let items = _publishQueue
+        _publishQueue.removeAll()
+        queueLock.unlock()
+        for item in items {
+            _publishFn?(item.event, item.data, item.completion) ?? item.completion?(false)
+        }
     }
 
     func handleEvent(_ event: String, data: Any) {

@@ -1,11 +1,34 @@
 import CryptoKit
 import Foundation
 
+// MARK: - Cluster map
+
+/// Maps cluster shorthand names to their resolved WebSocket and API endpoints.
+///
+/// Use `"default"` for the AmarWave cloud. Use `"local"` for a self-hosted
+/// server running on localhost.
+public let AmarWaveClusterHosts: [String: (wsHost: String, wsPort: Int, wssPort: Int, apiHost: String, apiPort: Int)] = [
+    "default": ("amarwave.com",  80,   443, "amarwave.com",  443),
+    "local":   ("localhost",     3001, 3001, "localhost",    8000),
+    "eu":      ("amarwave.com",  80,   443, "amarwave.com",  443),
+    "us":      ("amarwave.com",  80,   443, "amarwave.com",  443),
+    "ap1":     ("amarwave.com",  80,   443, "amarwave.com",  443),
+    "ap2":     ("amarwave.com",  80,   443, "amarwave.com",  443),
+]
+
 // MARK: - Configuration
 
 /// Configuration for the AmarWave WebSocket client.
 public struct AmarWaveConfiguration {
+    /// Named cluster. Automatically resolves `wsHost`, `wsPort`, `wssPort`,
+    /// `apiHost`, and `apiPort` — no manual host/port setup needed.
+    ///
+    /// Built-in values: `"default"`, `"local"`, `"eu"`, `"us"`, `"ap1"`, `"ap2"`.
+    /// Explicit `wsHost`/`wsPort` values still take priority over the cluster.
+    public var cluster: String
+
     /// Hostname of the AmarWave WebSocket server.
+    /// Leave `nil` (omit) when using `cluster` — resolved automatically.
     public var wsHost: String
     /// Plain-text WebSocket port (used when `useTLS` is false).
     public var wsPort: Int
@@ -16,7 +39,7 @@ public struct AmarWaveConfiguration {
 
     /// HTTP API hostname for publishing events. Defaults to `wsHost` when `nil`.
     public var apiHost: String?
-    /// HTTP API port. Used by `publish()`. Default: 8000.
+    /// HTTP API port. Used by `publish()`.
     public var apiPort: Int
     /// HTTP API trigger path. Default: "/api/v1/trigger".
     public var apiPath: String
@@ -47,28 +70,33 @@ public struct AmarWaveConfiguration {
     /// Disable usage stats in ping payloads. Default: false.
     public var disableStats: Bool
 
-    /// Resolved API host — falls back to `wsHost` when `apiHost` is nil.
+    /// Resolved API host — uses cluster's apiHost, then falls back to `wsHost`.
     var resolvedApiHost: String { apiHost ?? wsHost }
 
+    /// Resolved HTTP API port.
+    var resolvedApiPort: Int { apiHost != nil ? apiPort : apiPort }
+
     /// Supported environment variables:
-    /// - `AMARWAVE_WS_HOST`       WebSocket hostname          (default: localhost)
-    /// - `AMARWAVE_WS_PORT`       WebSocket plain-text port   (default: 3001)
-    /// - `AMARWAVE_WSS_PORT`      WebSocket TLS port           (default: 443)
+    /// - `AMARWAVE_CLUSTER`      Cluster name                (default: "default")
+    /// - `AMARWAVE_WS_HOST`       WebSocket hostname override
+    /// - `AMARWAVE_WS_PORT`       WebSocket plain-text port override
+    /// - `AMARWAVE_WSS_PORT`      WebSocket TLS port override
     /// - `AMARWAVE_WS_TLS`        'true' to enable TLS        (default: false)
     /// - `AMARWAVE_WS_PATH`       WebSocket upgrade path       (default: /ws)
-    /// - `AMARWAVE_API_HOST`      HTTP API hostname            (default: wsHost)
-    /// - `AMARWAVE_API_PORT`      HTTP API port                (default: 8000)
+    /// - `AMARWAVE_API_HOST`      HTTP API hostname override
+    /// - `AMARWAVE_API_PORT`      HTTP API port override
     /// - `AMARWAVE_API_PATH`      HTTP API trigger path        (default: /api/v1/trigger)
-    /// - `AMARWAVE_APP_SECRET`    App secret for HMAC auth    (default: nil)
-    /// - `AMARWAVE_AUTH_ENDPOINT` Channel auth endpoint URL   (default: nil)
+    /// - `AMARWAVE_APP_SECRET`    App secret for HMAC auth
+    /// - `AMARWAVE_AUTH_ENDPOINT` Channel auth endpoint URL
     public init(
+        cluster: String = "default",
         wsHost: String? = nil,
         wsPort: Int? = nil,
-        wssPort: Int = 443,
+        wssPort: Int? = nil,
         useTLS: Bool? = nil,
         wsPath: String? = nil,
         apiHost: String? = nil,
-        apiPort: Int = 8000,
+        apiPort: Int? = nil,
         apiPath: String? = nil,
         appSecret: String? = nil,
         authEndpoint: String? = nil,
@@ -81,13 +109,17 @@ public struct AmarWaveConfiguration {
         disableStats: Bool = false
     ) {
         let env = ProcessInfo.processInfo.environment
-        self.wsHost            = wsHost     ?? env["AMARWAVE_WS_HOST"]  ?? "localhost"
-        self.wsPort            = wsPort     ?? env["AMARWAVE_WS_PORT"].flatMap(Int.init) ?? 3001
-        self.wssPort           = env["AMARWAVE_WSS_PORT"].flatMap(Int.init) ?? wssPort
+        let resolvedCluster = env["AMARWAVE_CLUSTER"] ?? cluster
+        let clusterEntry = AmarWaveClusterHosts[resolvedCluster] ?? AmarWaveClusterHosts["default"]!
+
+        self.cluster           = resolvedCluster
+        self.wsHost            = wsHost     ?? env["AMARWAVE_WS_HOST"]  ?? clusterEntry.wsHost
+        self.wsPort            = wsPort     ?? env["AMARWAVE_WS_PORT"].flatMap(Int.init)  ?? clusterEntry.wsPort
+        self.wssPort           = wssPort    ?? env["AMARWAVE_WSS_PORT"].flatMap(Int.init) ?? clusterEntry.wssPort
         self.useTLS            = useTLS     ?? (env["AMARWAVE_WS_TLS"]?.lowercased() == "true")
         self.wsPath            = wsPath     ?? env["AMARWAVE_WS_PATH"]  ?? "/ws"
         self.apiHost           = apiHost    ?? env["AMARWAVE_API_HOST"]
-        self.apiPort           = env["AMARWAVE_API_PORT"].flatMap(Int.init) ?? apiPort
+        self.apiPort           = apiPort    ?? env["AMARWAVE_API_PORT"].flatMap(Int.init) ?? clusterEntry.apiPort
         self.apiPath           = apiPath    ?? env["AMARWAVE_API_PATH"] ?? "/api/v1/trigger"
         self.appSecret         = appSecret  ?? env["AMARWAVE_APP_SECRET"]
         self.authEndpoint      = authEndpoint ?? env["AMARWAVE_AUTH_ENDPOINT"]
@@ -192,9 +224,13 @@ public class AmarWave: NSObject {
             return existing
         }
 
+        let publishFn: AmarWaveChannel.PublishFn = { [weak self] event, data, completion in
+            self?.publish(channel: channelName, event: event, data: data, completion: completion)
+        }
+
         let channel: AmarWaveChannel = channelName.hasPrefix("presence-")
-            ? AmarWavePresenceChannel(name: channelName)
-            : AmarWaveChannel(name: channelName)
+            ? AmarWavePresenceChannel(name: channelName, publish: publishFn)
+            : AmarWaveChannel(name: channelName, publish: publishFn)
 
         channels[channelName] = channel
         lock.unlock()
@@ -243,7 +279,9 @@ public class AmarWave: NSObject {
         completion: ((Bool) -> Void)? = nil
     ) -> URLSessionDataTask? {
         let scheme = config.useTLS ? "https" : "http"
-        let urlStr = "\(scheme)://\(config.resolvedApiHost):\(config.apiPort)\(config.apiPath)"
+        let defaultApiPort = config.useTLS ? 443 : 80
+        let portSuffix = config.apiPort == defaultApiPort ? "" : ":\(config.apiPort)"
+        let urlStr = "\(scheme)://\(config.resolvedApiHost)\(portSuffix)\(config.apiPath)"
         guard let url = URL(string: urlStr) else {
             completion?(false); return nil
         }
@@ -365,8 +403,12 @@ public class AmarWave: NSObject {
         switch event {
         case "amarwave_internal:subscription_succeeded":
             channel?.setSubscribed(true)
+            channel?.flushQueue()
             channel?.handleEvent("subscribed", data: data)
             channel?.handleEvent("amarwave_internal:subscription_succeeded", data: data)
+        case "amarwave_internal:subscription_error":
+            channel?.handleEvent("error", data: data)
+            channel?.handleEvent("amarwave_internal:subscription_error", data: data)
         case "amarwave_internal:member_added":
             (channel as? AmarWavePresenceChannel)?.handleEvent(event, data: data)
         case "amarwave_internal:member_removed":

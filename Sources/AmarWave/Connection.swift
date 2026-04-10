@@ -137,7 +137,9 @@ public final class AmarWaveConnection: NSObject, URLSessionWebSocketDelegate {
 
         let scheme = config.useTLS ? "wss" : "ws"
         let port   = config.useTLS ? config.wssPort : config.wsPort
-        guard let url = URL(string: "\(scheme)://\(config.wsHost):\(port)\(config.wsPath)?app_key=\(appKey)") else {
+        let defaultPort = config.useTLS ? 443 : 80
+        let portSuffix  = port == defaultPort ? "" : ":\(port)"
+        guard let url = URL(string: "\(scheme)://\(config.wsHost)\(portSuffix)\(config.wsPath)?app_key=\(appKey)") else {
             print("[AmarWave] Invalid WebSocket URL.")
             state = .failed
             return
