@@ -10,7 +10,7 @@ All notable changes to the AmarWave Swift SDK will be documented in this file.
 - Public, private (`private-`), and presence (`presence-`) channel support.
 - `AmarWavePresenceChannel` with live `members` dict, `memberCount`, and `me`.
 - `channel.publish(event:data:completion:)` with pre-subscription queue.
-- Named cluster support (`cluster: "default"` / `"local"` / `"eu"` etc.) — auto-resolves host and port.
+- Named cluster support (`cluster: "default"` / `"eu"` etc.) — auto-resolves host and port.
 - Client-side HMAC-SHA256 auth via `appSecret` (dev/testing only).
 - Server-side channel auth via `authEndpoint`.
 - Exponential-backoff reconnect with configurable `maxRetries`.

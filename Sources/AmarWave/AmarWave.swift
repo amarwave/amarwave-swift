@@ -5,8 +5,7 @@ import Foundation
 
 /// Maps cluster shorthand names to their resolved WebSocket and API endpoints.
 ///
-/// Use `"default"` for the AmarWave cloud. Use `"local"` for a self-hosted
-/// server running on localhost.
+/// Use `"default"` for the AmarWave cloud.
 public let AmarWaveClusterHosts: [String: (wsHost: String, wsPort: Int, wssPort: Int, apiHost: String, apiPort: Int)] = [
     "default": ("amarwave.com",  80,   443, "amarwave.com",  443),
     "local":   ("localhost",     3001, 3001, "localhost",    8000),
