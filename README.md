@@ -50,11 +50,7 @@ import AmarWave
 
 let aw = AmarWave(
     appKey: "your-app-key",
-    configuration: AmarWaveConfiguration(
-        wsHost: "your-server.com",
-        wsPort: 3001,
-        useTLS: false
-    )
+    configuration: AmarWaveConfiguration(cluster: "default")
 )
 
 // Subscribe to a public channel
@@ -73,10 +69,8 @@ channel.bind(event: "new-message") { data in
 
 ```swift
 let config = AmarWaveConfiguration(
-    wsHost: "your-server.com",  // WebSocket server hostname
-    wsPort: 3001,               // Plain-text port
-    wssPort: 443,               // TLS port
-    useTLS: false,              // true = wss://
+    cluster: "default",         // resolves amarwave.com automatically
+    useTLS: true,               // true = wss://
     authEndpoint: "https://your-api.com/broadcasting/auth",  // for private/presence
     authHeaders: [
         "Authorization": "Bearer \(token)"
@@ -158,8 +152,7 @@ Set `authEndpoint` in your configuration — the SDK calls it automatically.
 
 ```swift
 let config = AmarWaveConfiguration(
-    wsHost: "your-server.com",
-    wsPort: 3001,
+    cluster: "default",
     authEndpoint: "https://your-api.com/broadcasting/auth",
     authHeaders: ["Authorization": "Bearer \(userToken)"]
 )
@@ -262,7 +255,7 @@ class RealTimeViewModel: ObservableObject {
     init() {
         aw = AmarWave(
             appKey: "your-key",
-            configuration: AmarWaveConfiguration(wsHost: "your-server.com")
+            configuration: AmarWaveConfiguration(cluster: "default")
         )
 
         let channel = aw.subscribe(to: "chat")

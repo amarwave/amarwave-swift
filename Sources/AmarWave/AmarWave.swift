@@ -153,7 +153,7 @@ public enum ConnectionState: String, Sendable {
 /// let aw = AmarWave(
 ///     appKey: "your-app-key",
 ///     appSecret: "your-app-secret",   // optional — enables client-side HMAC
-///     configuration: AmarWaveConfiguration(wsHost: "your-server.com")
+///     configuration: AmarWaveConfiguration(cluster: "default")
 /// )
 ///
 /// aw.connection.bind(event: "connected") { _ in
