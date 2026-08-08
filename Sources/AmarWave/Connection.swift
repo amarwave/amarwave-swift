@@ -195,6 +195,7 @@ public final class AmarWaveConnection: NSObject, URLSessionWebSocketDelegate {
     // MARK: - Message parsing
 
     private func parseMessage(_ text: String) {
+        resetPingTimer()   // any received frame resets the inactivity clock
         guard let data = text.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let event = json["event"] as? String else { return }
@@ -217,11 +218,10 @@ public final class AmarWaveConnection: NSObject, URLSessionWebSocketDelegate {
             if let dict = parsedData as? [String: Any],
                let socketId = dict["socket_id"] as? String {
                 self.socketId = socketId
-                let wasRetrying = retryCount > 0
                 retryCount = 0
                 state = .connected
                 startPing()
-                if wasRetrying { onReconnected?() }
+                onReconnected?()   // always resubscribe — covers initial connect and reconnect
             }
 
         case "amarwave:ping":
@@ -241,12 +241,18 @@ public final class AmarWaveConnection: NSObject, URLSessionWebSocketDelegate {
     // MARK: - Ping / Pong
 
     private func startPing() {
-        stopPing()
+        resetPingTimer()
+    }
+
+    /// Restart the one-shot inactivity timer. Called on every received message
+    /// and on initial connect so the timer measures true inactivity, not elapsed time.
+    private func resetPingTimer() {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
+            self.pingTimer?.invalidate()
             self.pingTimer = Timer.scheduledTimer(
                 withTimeInterval: self.config.activityTimeout,
-                repeats: true
+                repeats: false   // one-shot — restarted by the next incoming message
             ) { [weak self] _ in self?.sendPing() }
         }
     }
@@ -305,10 +311,12 @@ public final class AmarWaveConnection: NSObject, URLSessionWebSocketDelegate {
             config.reconnectDelay * pow(2.0, Double(retryCount)),
             config.maxReconnectDelay
         )
-        retryCount += 1
-        print("[AmarWave] Reconnecting in \(String(format: "%.1f", delay))s (attempt \(retryCount))…")
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
+            // Guard against double-call (receiveNext failure + didCloseWith firing for same close)
+            guard self.reconnectTimer == nil else { return }
+            self.retryCount += 1
+            print("[AmarWave] Reconnecting in \(String(format: "%.1f", delay))s (attempt \(self.retryCount))…")
             self.reconnectTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
                 self?.openSocket()
             }

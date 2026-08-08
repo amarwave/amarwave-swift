@@ -277,8 +277,10 @@ public class AmarWave: NSObject {
         data: [String: Any] = [:],
         completion: ((Bool) -> Void)? = nil
     ) -> URLSessionDataTask? {
-        let scheme = config.useTLS ? "https" : "http"
-        let defaultApiPort = config.useTLS ? 443 : 80
+        // Port 443 implies HTTPS regardless of useTLS (cloud cluster resolves apiPort to 443)
+        let useTLSForApi   = config.useTLS || config.apiPort == 443
+        let scheme         = useTLSForApi ? "https" : "http"
+        let defaultApiPort = useTLSForApi ? 443 : 80
         let portSuffix = config.apiPort == defaultApiPort ? "" : ":\(config.apiPort)"
         let urlStr = "\(scheme)://\(config.resolvedApiHost)\(portSuffix)\(config.apiPath)"
         guard let url = URL(string: urlStr) else {
@@ -365,15 +367,11 @@ public class AmarWave: NSObject {
 
         var req        = URLRequest(url: url)
         req.httpMethod = "POST"
-        req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         for (k, v) in config.authHeaders { req.setValue(v, forHTTPHeaderField: k) }
 
-        var comps = URLComponents()
-        comps.queryItems = [
-            URLQueryItem(name: "socket_id",    value: socketId),
-            URLQueryItem(name: "channel_name", value: channel.name),
-        ]
-        req.httpBody = comps.query?.data(using: .utf8)
+        let authPayload: [String: Any] = ["socket_id": socketId, "channel_name": channel.name]
+        req.httpBody = try? JSONSerialization.data(withJSONObject: authPayload)
 
         URLSession.shared.dataTask(with: req) { [weak self] data, _, error in
             guard let self else { return }
